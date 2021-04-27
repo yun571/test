@@ -1,0 +1,715 @@
+
+Android 系统默认参数的修改之系列（一）
+Eliot_shao 2018-05-08 13:50:48 1786 收藏 2
+分类专栏： android系统开发 文章标签： android
+
+一般在新项目开始之初，我们需要针对客户需求进行各种系统默认属性的配置，通常这些属性都是通过build.prop、settings.db 、default.xml、一些功能package下的 config.xml 等来进行初始化配置的。
+
+那么，要满足客户的定制需求，对于我们开发者来说，修改SettingsProvider默认值，而第一次开机时，用来填充settings.db的数据都是从frameworks/base/packages/SettingsProvider/res/values/defaults.xml 这个文件来读取的。所以大部分的系统属性都是通过修改此处的xml节点来修改的。当然有一些属性是在device下的project.mk中去修改使其编译时添加到build.prop中去。
+
+接下来，我将从我所参与过的项目中，去一点点的记录需要修改的属性都怎么设置。
+
+
+对于Android手机ODM界的朋友，通读这篇文章后，基本上能完成项目前期70%的适配工作（如果是做MTK平台的话，那更好，可以用来控制的宏变量更加丰富）。
+
+
+1. 去掉“亮度”中的自动调节
+
+第一步、修改frameworks/base/core/res/res/values/config.xml中的
+
+false
+
+第二步、在Marvell1908平台中，没有根据此property来确定“自动”按钮的显示还是隐藏，所以还需在SystemUI中动态确定该CheckBox的显示与否:
+
+BrightnessController.java中添加如下方法
+
+    private void updateAutomaticButton(boolean automatic) {
+
+        android.util.Log.d(TAG, " Automatic button aviliable: " + automatic);
+
+        if(null != mControl) {
+
+            mControl.setAutomaticAvailable(automatic);
+
+        }
+
+    }
+
+在updateMode()中调用该方法:
+
+private void updateMode() {
+
+// … …
+
+} else {
+
+            mControl.setChecked(false);
+
+            updateIcon(false );
+
+   }
+
+updateAutomaticButton(mAutomaticAvailable);
+
+}
+
+在ToggleSlider.java中添加接口：
+
+    public void setAutomaticAvailable(boolean autoBrightness) {
+
+        if(null != mToggle) {
+
+            //mToggle.setWidth(autoBrightness ? 48: 0);
+
+            mToggle.getLayoutParams().width = autoBrightness ? 48: 0;
+
+            mToggle.setOnCheckedChangeListener(autoBrightness ? this : null);
+
+        }
+
+    }
+
+Tip:
+
+不支持光感设备去掉“自动调节亮度”需要考虑 桌面小部件、下拉状态栏、亮度调节Dialog以及第三方apk这四个方面的Icon的显示问题。如果修改boolean property还不能达到效果，就需要考虑第二步。
+
+2. 修改“亮度”的最值、默认值、半暗值
+
+修改frameworks/base/core/res/res/values/config.xml中的
+
+10
+
+255
+
+102
+
+10
+3. 修改开机时的默认亮度
+
+修改frameworks/base/packages/SettingsProvider/res/values/defaults.xml中的   
+
+    51
+4. 修改开关机铃声
+
+开关机动画相关所在路径是在frameworks/base/cmds/bootanimation/中去操作的(不同平台略有不同)；
+
+Android设备的铃声资源都是在frameworks/base/data/sounds中
+
+ 
+
+Marvell 平台是在frameworks/base/cmds/bootanimation/BootAudio.cpp
+
+#define USER_BOOTMUSIC_FILE "/data/local/bootupmusic.mp3"
+
+#define SYSTEM_BOOTMUSIC_FILE "/system/media/bootupmusic.mp3"
+
+ 
+
+#define USER_SHUTDOWNMUSIC_FILE "/data/local/shutdownmusic.mp3"
+
+#define SYSTEM_SHUTDOWNMUSIC_FILE "/system/media/shutdownmusic.mp3"
+
+用需要替换的开关机铃声overlay 对应的文件 /system/media/bootupmusic.mp3 和 /system/media/shutdownmusic.mp3 即可，注意资源名称要一致，改为对应的bootupmusic.mp3 或者 shutdownmusic.mp3
+
+Qualcomm平台是在frameworks/base/cmds/bootanimation/ bootanimation_main.cpp中
+
+void BootAnimation::playBackgroundMusic(void)
+
+{
+
+    char bootAudioFile[] = "/system/media/boot.wav";
+
+   char shutdownAudioFile[] = "/system/media/shutdown.wav";
+
+// … …
+
+}
+
+需要将替换的资源overlay下boot.wav shutdown.wav 注意名称一致，格式也必须一致。或者直接修改这里的cpp代码。
+
+5. 修改Android默认壁纸
+
+Overlay掉frameworks/base/core/res/res/drawable-nodpi/ default_wallpaper.jpg即可
+6. 编译版本时不生成odex
+
+一般odex化是在4.0以后的版本中有的功能，odex化可以使系统的启动和程序运行速度大大提高，稳定性不变。但是编译时生成odex包会大大增加system.img的体积，不利于ota升级，t卡升级，所以在编译时可以去odex。
+
+需要在.mk文件中添加属性：
+
+#remove odex
+
+DISABLE_DEXPREOPT:=true
+
+7. 修改默认来电铃声、通知铃声
+
+首先需要检查要修改的资源是否在frameworks/base/data/sounds/下的notifications/和ringtones/中，如果没有，需要添加上去，将资源在该目录下的.mk中按照其他的资源的方式添加进去。然后在device下的.mk中添加属性：
+
+ADDITIONAL_BUILD_PROPERTIES += /
+
+ro.config.ringtone = Andromeda.ogg /
+
+ro.config.notification_sound=Heaven.ogg 
+
+注意，在不同的平台中properties的宏定义可能有所不同，在Marvell中ADDITIONAL_BUILD_PROPERTIES为property的overlay property而在Qualcomm中 build peoperty的宏 为PRODUCT_PROPERTY_OVERRIDES；要预置的铃声资源需要在设备中存在，不然默认铃声就为“无”，这个可以去frameworks/base/data/sounds/下面查看，然后对应修改AllAudio.mkl文件即可。
+8. 修改语言列表、默认语言
+
+在.mk中修改属性：
+
+# only use zh_CN ,us  and default CN
+
+PRODUCT_LOCALES += zh_CN en_US
+
+PRODUCT_PROPERTY_OVERRIDES += /
+
+    persist.sys.language=zh /
+
+    persist.sys.country=CN /
+
+    ro.product.locale.language=zh /
+
+    ro.product.locale.region=CN
+
+注意是 += 而不是 :=
+
+:= 覆盖前面的值
+
++= 添加=后面的值
+
+?= 如果没有被赋值，就赋值于=后面的值
+
+在这里就是将这些属性全部覆盖之前的定义。可以看到在这里定义了 默认语言为中文，默认地区为中国。并且只有 中文英文 两种。
+9. 修改默认时区
+
+在.mk中添加：
+
+PRODUCT_PROPERTY_OVERRIDES += /
+
+persist.sys.timezone= Asia/Shanghai
+
+另外还有一种方法：
+
+    在 init.rc 中添加
+
+#set default timezone
+
+setprop persist.sys.timezone Asia/Shanghai
+
+直接在底层修改默认时区（如果不熟悉，最好让驱动工程师来修改）
+
+10. 修改开关机动画
+
+与修改开关机铃声一样，开关机动画相关代码都是在frameworks/base/cmds/bootanimation/中，需要我们根据代码去制作动画。
+
+一般在Android设备中，开关机动画都是通过帧动画来实现的。
+
+以Marvell平台为参考：
+
+frameworks/base/cmds/bootanimation/BootAnimation.cpp
+
+ 
+
+#define USER_BOOTANIMATION_FILE "/data/local/bootanimation.zip"
+
+#define SYSTEM_BOOTANIMATION_FILE "/system/media/bootanimation.zip"
+
+ 
+
+//add  shutdown animation
+
+#define USER_SHUTDOWNANIMATION_FILE "/data/local/shutdown.zip"
+
+#define SYSTEM_SHUTDOWNANIMATION_FILE "/system/media/shutdown.zip"
+
+ 
+
+所以需要去overlay 资源 /system/media/bootanimation.zip 和/system/media/shutdown.zip，下面简单的介绍下开关机动画zip的制作：
+
+1) 建立bootanimation文件夹；
+
+2) 在bootanimation/下添加开机图片，图片必须为.png格式；
+
+3) 将图片按照start00001.png start00002.png ... ... start00049.png格式命名；
+
+4) 按照个人需要将图片按序号放在文件夹part0 、part1 、part2下，具体几个partX文件夹，按照个人需求；
+
+5) 在bootanimation/下添加动画属性描述文件desc.txt,他用来设置动画的像素、帧、闪烁次数、文件夹名称，
+
+desc.txt 必须严格执行Makefile格式
+
+我们看一个dest.txt:
+
+320 480 15
+
+p 1 0 part0
+
+p 0 0 part1
+
+320 480 15 --> 320 像素宽度 480 像素高度 15 帧数
+
+p 1 0 part --> p 标识符 1 循环次数为1 0 阶段间隔时间为0 part0 对应文件夹，为第一阶段动画目录
+
+p 0 0 part1 --> p 标识符 0 本阶段无限循环 0 阶段间隔时间为0 part1 对应文件夹，为第二阶段动画
+
+最后必须要有回车符，确保指令都已经完成。
+
+6) 开始打包，使用WinRAR压缩工具，打包为bootanimation.zip：
+
+需要选择“压缩文件格式”为 .zip;
+
+需要选择“压缩方式”为“存储”。
+
+制作完成。
+11. 修改状态栏透明
+
+状态栏透明的属性是在andorid4.4上面出现的新特性，不过对于状态栏透明效果的设置要求比较高，一般是在运行内存>=512M的设备上才能运行，因为要实现状态栏透明需要硬件加速来配合，不然动画效果十分卡顿。修改状态栏透明需要SystemUI与Launcher配合，才能达到效果。
+
+1) 修改SystemUI的一个属性
+
+frameworks/base/packages/SystemUI/src/com/android/systemui/statusbar/phone/BarTransitions.java::
+
+public static final boolean HIGH_END = ActivityManager.isHighEndGfx() ;
+
+// ActivityManager.isHighEndGfx()是用来判断系统是否为大内存设备。将HIGH_END = true 让SystemUI默认为大内存设备
+
+2) 在packages/apps/Launcher2/src/com/android/launcher2/style.xml中自定义一个状态栏透明的Theme属性节点：
+
+parent="@android:style/Theme.Holo.Wallpaper.NoTitleBar">
+
+  true 
+
+  @android:color/transparent 
+
+  @null 
+
+  true 
+
+在android4.4以后framewok中Theme.xml中增加了以下两个属性节点：
+
+        false
+
+        false
+
+由于Marvell项目中使用的是实体按键，所以就只覆盖了上面那个属性。
+
+3) 修改packages/apps/Launcher2/src/com/android/launcher2/Launcher2.java::
+
+    @Override
+
+    protected void onCreate(Bundle savedInstanceState) {
+
+        if("pxa1L88H3".equals(Build.DEVICE)) {//Added by hanhao for bug30425 20140902
+
+            setTheme(R.style.TransparentTheme);
+
+        }
+
+}
+
+在Launcher的onCreate方法中使用自定义属性，或者直接在AndroidMainest.xml中通过android:theme=”@style/ TransparentTheme”节点来实现。
+
+12. 去掉桌面上的Google搜索框
+
+一般这个需求是针对使用Google原生启动器Launcher2而言的。因为在Google原生代码里，有显示GoogleSearch的代码，主要是为了显示Google搜索，如果有GoogleVoice还可以显示语音搜索按钮，针对大陆手机来说，Google Search功能已经被和谐掉，所以要么制作成百度搜索，要么去掉。去掉Google搜索框的方法有很多。分两步走，第一，去掉Google搜索框；第二、调整Workspace布局，去掉Google搜索框在界面上的占位。
+
+第一、去掉Google搜索框
+
+1. 简单粗暴式一
+
+packages/apps/Launcher2/src/com/android/launcher2/Launcher.java::
+
+private boolean updateGlobalSearchIcon() {
+
+final SearchManager searchManager =
+
+                (SearchManager) getSystemService(Context.SEARCH_SERVICE);
+
+ComponentName activityName = searchManager.getGlobalSearchActivity();
+
+ 
+
+if(Build.DEVICE.equals("pxa1L88H3")) {
+
+        activityName = null;
+
+}
+
+ 
+
+if (activityName != null) {
+
+// … …
+
+else {
+
+            // We disable both search and voice search when there is no global search provider
+
+}
+
+}
+
+在Launcher2进程启动时，onCreate和onResume中会更新GlobalSearch图标并保存在数组中，上面的修改 将逻辑修改成了在设备中永远默认没有GlobalSearch 应用，所以就走了下面的else分支，可保证桌面不显示Google搜索框，上面是根据项目名做判断，也可以直接这样：
+
+if (false && activityName != null) {
+
+2. 简单粗暴式二
+
+在packages/apps/Launcher2/res/values/dimens.xml中修改节点
+
+0dp
+
+这样也能保证永不显示Google搜索框
+
+3. 修改QuickSearchBox模块
+
+去掉AndroidManifest.xml的下面节点:
+
+比较可取的是1、3这两种方法。
+
+第二、去掉Workspace的占位
+
+主要是微调布局，修改values/dimens.xml，按需修改适当的数值，下面是几个亲测符合ho9021项目4.3寸屏的布局
+
+调整cellLayout的布局+调整ShortcutIcon的间距，使其整体上移
+
+28dp
+
+48dp
+
+18dp
+
+另外还可以通过设置Workspace的高度配合调整ShortcutIcon的间距也能实现：
+
+100dp
+13. 在Launcher中隐藏掉某个App
+
+在这里所说的Launcher都是Google原生的Launcher2应用。
+
+修改packages/apps/Launcher2/src/com/android/launcher2/LauncherModel.java::
+
+private void loadAllAppsByBatch() {
+
+// … …
+
+apps = packageManager.queryIntentActivities(mainIntent, 0);
+
+    if (DEBUG_LOADERS) {
+
+        Log.d(TAG, "queryIntentActivities took "
+
+            + (SystemClock.uptimeMillis()-qiaTime) + "ms");
+
+}
+
+if (apps == null) {
+
+return;
+
+}
+
+// Added for example code start 
+
+ResolveInfo removeApp = null;
+
+    for(ResolveInfo info : apps) {
+
+if(null！= info && 
+
+info.activityInfo.packageName.equals("com.android.spare_parts")) {
+
+removeApp = info;
+
+}
+
+}
+
+ 
+
+if(null != removeApp) {
+
+apps.remove(removeApp);
+
+}
+
+// Added end
+
+N = apps.size();
+
+// … …
+
+}
+
+上面的代码是在启动器启动时会通过一个List将各个app信息保存起来，然后再添加到桌布上，上面的代码就是遍历获取到的所有的符合条件的app，过滤掉我们不想显示的。当然该代码可以抽取出来成一个方法，或者放入油条包中，抽象成一个static的工具。
+
+那么如果要隐藏掉的app比较多的时候怎么办？ 其实可以新建一个tempArrayList,将查询信息符合反向查找条件的再add到apps中，该方法为如下patch：
+14. 在任务管理器“全部”中去掉某个App
+
+任务管理器是Setting模块下的一个功能，其实也就是“设置—应用程序—全部”。需要修改packages/apps/settings/src/com/android/settings/applications/ManageApplications.java
+
+static class ApplicationsAdapter::
+
+ArrayList applyPrefixFilter(CharSequence prefix,
+
+ArrayList origEntries) {
+
+// 此处设置过滤条件进行过滤筛选
+
+ 
+
+if (prefix == null || prefix.length() == 0) {
+
+                return origEntries;
+
+} else {
+
+// … …
+
+}
+
+}
+
+15. 修改输入法列表、设置默认的输入法
+
+默认输入法是在frameworks/base/packages/SettingsProvider/res/values/defaults.xml中的节点，只需要在.mk中去overlay即可。
+
+com.android.inputmethod.latin/ .LatinIME:com.baidu.input/.ImeService:com.baidu.input/com.baidu.input.IME 
+
+ >com.baidu.input/.ImeService 
+
+其中def_enable_input_methods是要显示到输入法列表中的默认输入法，可以看到这个节点中默认的有两个输入法，Android键盘和百度输入法；
+
+def_input_method是默认被选中的那个输入法，可以看到这个节点中默认被选中的输入法是百度输入法。
+
+com.baidu.input->在AndroidManifest.xml中的 pachakename
+
+.ImeService ->在AndroidManifest.xml中的 service name
+
+16. 修改默认不锁屏
+
+1.在.mk 下如果有属性 ro.lockscreen.disable.default = true 则注释掉；
+
+2.Overlay SettingsProvider下的一个属性:
+
+frameworks/base/packages/SettingsProvider/res/values/defaults.xml:
+
+false
+
+因为在frameworks/base/packages/settingsprovider/src/com/android/providers/settings/ DatabaseHelper.java::
+
+            if (SystemProperties.getBoolean("ro.lockscreen.disable.default", false) == true) {
+
+                loadSetting(stmt, Settings.System.LOCKSCREEN_DISABLED, "1");
+
+            } else {
+
+                loadBooleanSetting(stmt, Settings.System.LOCKSCREEN_DISABLED,
+
+                        R.bool.def_lockscreen_disabled);
+
+            }
+
+如果设置了 property属性，那么就直接设置为默认有锁屏，忽略default.xml下的节点。
+
+17. 设置第一次开机时的默认Launcher
+
+该需求是在Marvell的ho_9021上做的，在9021上除了Google原生Launcher之外，还预置了一个宾果桌面，那么在第一次开机时，由于没有设置preferred Activity 这就导致在第一次开机时候首先会弹出一个选项框让用户选择launcher。
+
+这个需求是在第一次开机时，直接进入默认的Launcher，不弹出选项框，当用户从“设置—应用—全部”，选择正在使用的Launcher，并点击“清除默认设置”；就能去掉Launcher的preferred 属性，当再次回到桌面，则正常弹出选项框。
+
+该需求修改的前提是系统没有开机向导，使用Android默认的开机向导。在Android源码会有有个packages/apps/Provision模块，很少有人注意到他。
+
+从他的AndroidManifest.xml中从category 可以看到他也是一个Launcher，同时他的priority=”1”说明他的优先级是最高的，也就是系统第一次启动时，启动的第一个Launcher就是他DefaultActivity。对这里感兴趣的同学，可以看一下这个模块，功能非常简单，就是仅仅在第一次开机时完成一些开机向导类的工作。
+
+下面就步入正题，分析一下怎么设置默认launcher，首先有两个关键点：
+
+1. 设置默认Application需要加上权限：
+
+2. 需要在DefaultActivity.java的下面这段代码之前做操作：
+
+ComponentName name = new ComponentName(this, DefaultActivity.class);
+
+pm.setComponentEnabledSetting(name,PackageManager.COMPONENT_ENABLED_STATE_DISABLED,PackageManager.DONT_KILL_APP);
+
+这段代码是将Provision Application从PackageManager中移除。如果在这段代码之后操作，就会报错，或者失败。
+
+设置默认Luancher：
+
+1. 获取注册到系统中的所有Launcher：
+
+            Intent intent = new Intent(Intent.ACTION_MAIN);
+
+            intent.addCategory(Intent.CATEGORY_HOME);
+
+            List resolveInfoList = pm.queryIntentActivities(intent, 0);
+
+Tips:
+
+在此处获取系统中Launcher的List时不能使用pckageManager的
+
+getHomeActivities(List outActivities)；方法，通过这种方法会导致设置失败，具体原因我还不太知道。
+
+2. 将Pervision从resolveInfoList中过滤掉：
+
+int size = resolveInfoList.size();
+
+for(int i = 0; i < size; ) {
+
+final ResolveInfo resolveInfo = resolveInfoList.get(i);
+
+final ActivityInfo activityInfo = resolveInfo.activityInfo;
+
+if(null != activityInfo && activityInfo.packageName.equals(this.getPackageName())) {
+
+resolveInfoList.remove(i);
+
+size -= 1;
+
+} else {
+
+i++;
+
+    }
+
+ }
+
+3. 获取要设置为默认Launcher的 match(系统匹配度)
+
+ComponentName[] set = new ComponentName[size];
+
+ComponentName defaultLauncher = new ComponentName("com.android.bglauncher",
+
+"com.ibingo.launcher2.Launcher");
+
+int defaultMatch = 0;
+
+for(int i = 0; i < size; i++) {
+
+final ResolveInfo resolveInfo = resolveInfoList.get(i);
+
+final ActivityInfo activityInfo = resolveInfo.activityInfo;
+
+if(null == activityInfo) {
+
+continue;
+
+}                    
+
+set[i] = new ComponentName(activityInfo.packageName, activityInfo.name);
+
+if(defaultLauncher.getClassName().equals(activityInfo.name)) {
+
+    defaultMatch = resolveInfo.match;
+
+    }
+
+Slog.d(TAG, " candidate launcher:" + resolveInfo.toString());
+
+}
+
+4. 使用PackageManager的addPreferredActivity方法设置默认Launcher
+
+IntentFilter filter = new IntentFilter();
+
+filter.addAction(Intent.ACTION_MAIN);
+
+filter.addCategory(Intent.CATEGORY_HOME);
+
+filter.addCategory(Intent.CATEGORY_DEFAULT);
+
+ 
+
+pm.clearPackagePreferredActivities(defaultLauncher.getPackageName());
+
+pm.addPreferredActivity(filter, defaultMatch, set, defaultLauncher);
+
+Slog.d(TAG, " set default Launcher succesfully!");
+
+我们可以看到第2、3步骤都是在为PackageManager的addPreferredActivity方法获取参数，主要的设置preferred Activity的方法就是先清除application之前的默认属性，然后再将该Application设置为所有符合IntentFilter条件的Applications中的默认值。
+
+Tips:
+
+在整个添加的代码中需要加上try-catch保护
+
+那么我们再来看一下addPreferredActivity这个方法：
+
+Filter是过滤条件，也就是Application中满足filter的参数配置的Activity才会被操作；
+
+Match 是过滤条件filter与被操作的Application的匹配度值
+
+Set 作用是被操作的Application会在set集合中的这些Application中才有效
+
+Activity 就是被操作的Application
+
+了解了这个方法之后，不仅是默认Launcher，我们同样也可以从满足一定filter条件的Applications中选择一个，设置成默认值。
+
+18. 修改Wifi便携式热点的默认SSID名称
+
+frameworks/base/wifi/java/android/net/wifi/WifiApConfigStore.java中的
+
+setDefaultApConfiguration() {
+
+// … …
+
+config.SSID = mContext.getString(R.string.wifi_tether_configure_ssid_default);
+
+// … …
+
+}
+
+两种方法:
+
+1. 添加String，替换资源
+
+2. 添加”ro.settings.wifi.ssid ”属性，替换为
+
+config.SSID = SystemProperties.get("ro.settings.wifi.ssid",
+
+mContext.getString(R.string.wifi_tether_configure_ssid_default));
+
+19. 修改Wifi Direct 的默认名字
+
+1. 修改”ro.settings.wifi_p2p_name = Default Name” 如果没有该属性，则覆盖；
+
+2. frameworks/base/packages/settingsprovider/src/com/android/providers/settings/
+
+DatabaseHelper.java中添加：
+
+loadGlobalSettings(SQLiteDatabase db) {
+
+// … …
+
+loadSetting(stmt,Settings.Global.WIFI_P2P_DEVICE_NAME,
+
+SystemProperties.get("ro.settings.wifi_p2p_name",""));
+
+// … …
+
+}
+
+3. 按需修改frameworks/base/wifi/java/android/net/wifi/p2p/ WifiP2pService.java中
+
+getPersistedDeviceName() {
+
+String deviceName = Settings.Global.getString(mContext.getContentResolver(),
+
+                Settings.Global.WIFI_P2P_DEVICE_NAME);
+
+// … …
+
+if (deviceName == null) {
+
+// 按需修改此处的返回值
+
+}
+
+// … …
+
+}
+
+一般情况下正常修改，第1第2步就行了，比较规范，如果再添加上第3步的修改，更加保险，逻辑紧密，无懈可击；如果只在第3步的getPersistedDeviceName() 中去操作，虽然也能达到目的，但是不严谨。
+
+20. 修改WIFI热点中默认网络SSID名称AndroidAP
+
+请修改frameworks/base/core/res/res/values/Strings.xml文件中的如下默认字符：
+
+AndroidAP
+修改为需要的字符串
