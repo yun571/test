@@ -6,32 +6,28 @@
 
 // @lc code=start
 class Solution {
-    public int reverse(int x) {
-        int len = 0;
-        if(x != 0){
-            len = getLen(x);
-            for(int i=0;i < len;i++){
-                x+=Math.pow(x%10, len-i-1);
-            }
-        }
-        return x;
+    public static void main(String[] args) {
+        System.out.println(new Solution().reverse(1534236469));
+        System.out.println(new Solution().reverse(123));
+        System.out.println(new Solution().reverse(0));
+        System.out.println(new Solution().reverse(654));
+        long p = 964632435;
+        p = p*10 + 1;
+        System.out.println("===========\n"+p+"\n===========");
     }
-
-    public int getLen(int x){
-        int len=0;
-        if(x < 0){
-            x = -x;
-            len++;
-        }
-        if(x < 10){
-            return ++len;
-        }
-        while((x/10) >= 0){
-            x=x/10;
-            len++;  
-        }
-        System.out.println("len--->"+len);
-        return len;
+    public int reverse(int x) {
+        if(x==0){
+            return 0; }
+else{ 
+        long a = 0;
+                while (x != 0){
+                            a = a * 10 + x % 10;
+                            x= x /10;
+       }
+        if (a<=Math.pow(2,31) && a>=Math.pow(-2,31)){
+            return (int)a;
+        }else{
+        return 0;}}
     }
 }
 // @lc code=end
